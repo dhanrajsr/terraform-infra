@@ -1,4 +1,4 @@
-project_id         = "<YOUR_GCP_PROJECT_ID>"   # update before apply
+project_id         = "gen-lang-client-0110201077"
 region             = "us-east1"
 environment        = "dev"
 kubernetes_version = "1.30"

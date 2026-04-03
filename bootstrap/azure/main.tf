@@ -13,7 +13,7 @@
 # ─────────────────────────────────────────────────────────────
 
 terraform {
-  required_version = ">= 1.6"
+  required_version = ">= 1.5"
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
@@ -87,7 +87,7 @@ resource "azurerm_resource_group" "terraform_state" {
 
 # ─── Storage Account for Terraform State ─────────────────────
 resource "azurerm_storage_account" "terraform_state" {
-  name                     = "${replace(var.github_org, "-", "")}tfstate"
+  name                     = "azuredhanrajsrtfstate"
   resource_group_name      = azurerm_resource_group.terraform_state.name
   location                 = azurerm_resource_group.terraform_state.location
   account_tier             = "Standard"

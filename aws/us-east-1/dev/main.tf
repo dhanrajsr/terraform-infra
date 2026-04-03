@@ -1,8 +1,8 @@
 terraform {
-  required_version = ">= 1.6"
+  required_version = ">= 1.5"
 
   backend "s3" {
-    bucket         = "dhanrajsr-terraform-state-<ACCOUNT_ID>"   # update after bootstrap
+    bucket         = "aws-terraform-state-497041484428"
     key            = "aws/us-east-1/dev/terraform.tfstate"
     region         = "us-east-1"
     dynamodb_table = "terraform-state-lock"

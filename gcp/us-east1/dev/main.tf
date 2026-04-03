@@ -1,8 +1,8 @@
 terraform {
-  required_version = ">= 1.6"
+  required_version = ">= 1.5"
 
   backend "gcs" {
-    bucket = "<PROJECT_ID>-terraform-state"   # update after bootstrap
+    bucket = "gen-lang-client-0110201077-terraform-state"
     prefix = "gcp/us-east1/dev"
   }
 

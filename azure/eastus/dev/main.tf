@@ -1,9 +1,9 @@
 terraform {
-  required_version = ">= 1.6"
+  required_version = ">= 1.5"
 
   backend "azurerm" {
     resource_group_name  = "rg-terraform-state"
-    storage_account_name = "dhanrajsrtfstate"   # update after bootstrap
+    storage_account_name = "azuredhanrajsrtfstate"
     container_name       = "tfstate"
     key                  = "azure/eastus/dev/terraform.tfstate"
   }

@@ -12,7 +12,7 @@
 # ─────────────────────────────────────────────────────────────
 
 terraform {
-  required_version = ">= 1.6"
+  required_version = ">= 1.5"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -68,7 +68,7 @@ resource "aws_iam_role_policy_attachment" "github_actions" {
 
 # ─── S3 Bucket for Terraform State ───────────────────────────
 resource "aws_s3_bucket" "terraform_state" {
-  bucket = "${var.github_org}-terraform-state-${data.aws_caller_identity.current.account_id}"
+  bucket = "aws-terraform-state-${data.aws_caller_identity.current.account_id}"
 
   lifecycle {
     prevent_destroy = true
