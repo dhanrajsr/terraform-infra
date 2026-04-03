@@ -83,6 +83,10 @@ module "eks" {
     }
   }
 
+  # Grants cluster-admin to whichever IAM identity runs terraform apply
+  # Works for both GitHub Actions (OIDC role) and local (root/IAM user)
+  enable_cluster_creator_admin_permissions = true
+
   tags = var.tags
 }
 
