@@ -54,7 +54,8 @@ module "eks" {
 
 # ─── Helm Provider (root module — providers cannot live in child modules) ─────
 data "aws_eks_cluster_auth" "main" {
-  name = module.eks.cluster_name
+  name       = module.eks.cluster_name
+  depends_on = [module.eks]
 }
 
 provider "helm" {
@@ -67,6 +68,7 @@ provider "helm" {
 
 # ─── Cilium ───────────────────────────────────────────────────
 resource "helm_release" "cilium" {
+  depends_on = [module.eks]
   name       = "cilium"
   repository = "https://helm.cilium.io/"
   chart      = "cilium"
