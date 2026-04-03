@@ -129,14 +129,24 @@ resource "helm_release" "cilium" {
   version    = var.cilium_version
   namespace  = "kube-system"
 
-  set { name = "kubeProxyReplacement"; value = "true" }
-  set { name = "gke.enabled";          value = "true" }
-  set { name = "ipam.mode";            value = "kubernetes" }
-
+  set {
+    name  = "kubeProxyReplacement"
+    value = "true"
+  }
+  set {
+    name  = "gke.enabled"
+    value = "true"
+  }
+  set {
+    name  = "ipam.mode"
+    value = "kubernetes"
+  }
   set {
     name  = "k8sServiceHost"
     value = google_container_cluster.main.endpoint
   }
-
-  set { name = "k8sServicePort"; value = "443" }
+  set {
+    name  = "k8sServicePort"
+    value = "443"
+  }
 }

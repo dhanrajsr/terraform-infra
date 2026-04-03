@@ -127,11 +127,32 @@ resource "helm_release" "cilium" {
   version    = var.cilium_version
   namespace  = "kube-system"
 
-  set { name = "eni.enabled";                value = "true" }
-  set { name = "ipam.mode";                  value = "eni" }
-  set { name = "egressMasqueradeInterfaces"; value = "eth0" }
-  set { name = "tunnel";                     value = "disabled" }
-  set { name = "kubeProxyReplacement";       value = "true" }
-  set { name = "k8sServiceHost";             value = module.eks.cluster_endpoint }
-  set { name = "k8sServicePort";             value = "443" }
+  set {
+    name  = "eni.enabled"
+    value = "true"
+  }
+  set {
+    name  = "ipam.mode"
+    value = "eni"
+  }
+  set {
+    name  = "egressMasqueradeInterfaces"
+    value = "eth0"
+  }
+  set {
+    name  = "tunnel"
+    value = "disabled"
+  }
+  set {
+    name  = "kubeProxyReplacement"
+    value = "true"
+  }
+  set {
+    name  = "k8sServiceHost"
+    value = module.eks.cluster_endpoint
+  }
+  set {
+    name  = "k8sServicePort"
+    value = "443"
+  }
 }

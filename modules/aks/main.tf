@@ -96,14 +96,24 @@ resource "helm_release" "cilium" {
   version    = var.cilium_version
   namespace  = "kube-system"
 
-  set { name = "kubeProxyReplacement"; value = "true" }
-  set { name = "azure.enabled";        value = "true" }
-  set { name = "ipam.mode";            value = "azure" }
-
+  set {
+    name  = "kubeProxyReplacement"
+    value = "true"
+  }
+  set {
+    name  = "azure.enabled"
+    value = "true"
+  }
+  set {
+    name  = "ipam.mode"
+    value = "azure"
+  }
   set {
     name  = "k8sServiceHost"
     value = trimprefix(azurerm_kubernetes_cluster.main.kube_config[0].host, "https://")
   }
-
-  set { name = "k8sServicePort"; value = "443" }
+  set {
+    name  = "k8sServicePort"
+    value = "443"
+  }
 }
