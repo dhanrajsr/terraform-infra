@@ -93,13 +93,21 @@ jobs:
               body: output
             })
 
-      # Apply EKS cluster first (without Cilium helm_release)
-      # Cilium requires a live cluster for the Helm provider to authenticate
-      - name: Terraform Apply — EKS cluster
+      - name: Terraform Apply
         if: inputs.action == 'apply' && github.ref == 'refs/heads/main'
-        run: terraform apply -target=module.eks -auto-approve
+        run: terraform apply -auto-approve
 
-      # Install kubectl + update kubeconfig so Helm can reach the cluster
+      # ── Cilium installed via helm CLI (not Terraform) ──────────────────
+      # Helm provider cannot authenticate before cluster exists at init time.
+      # Using helm CLI after cluster is ready is the reliable approach.
+      - name: Install kubectl
+        if: inputs.action == 'apply' && github.ref == 'refs/heads/main'
+        uses: azure/setup-kubectl@v4
+
+      - name: Install Helm
+        if: inputs.action == 'apply' && github.ref == 'refs/heads/main'
+        uses: azure/setup-helm@v4
+
       - name: Update kubeconfig
         if: inputs.action == 'apply' && github.ref == 'refs/heads/main'
         run: |
@@ -107,10 +115,25 @@ jobs:
             --region us-east-1 \
             --name eks-${{ inputs.environment || 'dev' }}-us-east-1
 
-      # Apply remaining resources (Cilium helm_release) now cluster is ready
-      - name: Terraform Apply — Cilium
+      - name: Install Cilium via Helm
         if: inputs.action == 'apply' && github.ref == 'refs/heads/main'
-        run: terraform apply -auto-approve
+        run: |
+          helm repo add cilium https://helm.cilium.io/
+          helm repo update
+          helm upgrade --install cilium cilium/cilium \
+            --version 1.16.0 \
+            --namespace kube-system \
+            --set eni.enabled=true \
+            --set ipam.mode=eni \
+            --set egressMasqueradeInterfaces=eth0 \
+            --set tunnel=disabled \
+            --set kubeProxyReplacement=true \
+            --wait --timeout 5m
+
+      - name: Verify Cilium status
+        if: inputs.action == 'apply' && github.ref == 'refs/heads/main'
+        run: |
+          kubectl -n kube-system rollout status daemonset/cilium --timeout=120s
 
       - name: Terraform Destroy
         if: inputs.action == 'destroy' && github.ref == 'refs/heads/main'
