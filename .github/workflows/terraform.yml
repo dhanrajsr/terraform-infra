@@ -54,7 +54,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "~1.6"
+          terraform_version: "~1.5"
 
       - name: Terraform Format Check
         run: terraform fmt -check -recursive
@@ -93,9 +93,24 @@ jobs:
               body: output
             })
 
-      - name: Terraform Apply
+      # Apply EKS cluster first (without Cilium helm_release)
+      # Cilium requires a live cluster for the Helm provider to authenticate
+      - name: Terraform Apply — EKS cluster
         if: inputs.action == 'apply' && github.ref == 'refs/heads/main'
-        run: terraform apply tfplan
+        run: terraform apply -target=module.eks -auto-approve
+
+      # Install kubectl + update kubeconfig so Helm can reach the cluster
+      - name: Update kubeconfig
+        if: inputs.action == 'apply' && github.ref == 'refs/heads/main'
+        run: |
+          aws eks update-kubeconfig \
+            --region us-east-1 \
+            --name eks-${{ inputs.environment || 'dev' }}-us-east-1
+
+      # Apply remaining resources (Cilium helm_release) now cluster is ready
+      - name: Terraform Apply — Cilium
+        if: inputs.action == 'apply' && github.ref == 'refs/heads/main'
+        run: terraform apply -auto-approve
 
       - name: Terraform Destroy
         if: inputs.action == 'destroy' && github.ref == 'refs/heads/main'
@@ -127,7 +142,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "~1.6"
+          terraform_version: "~1.5"
 
       - name: Terraform Init
         run: terraform init
@@ -215,7 +230,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "~1.6"
+          terraform_version: "~1.5"
 
       - name: Terraform Init
         run: terraform init
