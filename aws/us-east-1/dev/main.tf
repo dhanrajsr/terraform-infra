@@ -14,6 +14,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.0"
+    }
   }
 }
 
@@ -21,6 +25,7 @@ provider "aws" {
   region = var.region
 }
 
+# ─── EKS Cluster ─────────────────────────────────────────────
 module "eks" {
   source = "../../../modules/eks"
 
@@ -39,12 +44,61 @@ module "eks" {
   max_nodes          = var.max_nodes
   desired_nodes      = var.desired_nodes
 
-  cilium_version = var.cilium_version
-
   tags = {
     environment = var.environment
     cloud       = "aws"
     region      = var.region
     managed_by  = "terraform"
+  }
+}
+
+# ─── Helm Provider (root module — providers cannot live in child modules) ─────
+data "aws_eks_cluster_auth" "main" {
+  name = module.eks.cluster_name
+}
+
+provider "helm" {
+  kubernetes {
+    host                   = module.eks.cluster_endpoint
+    cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
+    token                  = data.aws_eks_cluster_auth.main.token
+  }
+}
+
+# ─── Cilium ───────────────────────────────────────────────────
+resource "helm_release" "cilium" {
+  name       = "cilium"
+  repository = "https://helm.cilium.io/"
+  chart      = "cilium"
+  version    = var.cilium_version
+  namespace  = "kube-system"
+
+  set {
+    name  = "eni.enabled"
+    value = "true"
+  }
+  set {
+    name  = "ipam.mode"
+    value = "eni"
+  }
+  set {
+    name  = "egressMasqueradeInterfaces"
+    value = "eth0"
+  }
+  set {
+    name  = "tunnel"
+    value = "disabled"
+  }
+  set {
+    name  = "kubeProxyReplacement"
+    value = "true"
+  }
+  set {
+    name  = "k8sServiceHost"
+    value = module.eks.cluster_endpoint
+  }
+  set {
+    name  = "k8sServicePort"
+    value = "443"
   }
 }

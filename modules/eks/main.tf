@@ -1,10 +1,12 @@
 # ─────────────────────────────────────────────────────────────
-# Module: EKS with Cilium CNI
+# Module: EKS
 #
 # - Creates VPC with public/private subnets
-# - Provisions EKS cluster (no aws-node / kube-proxy addons)
-# - Disables AWS VPC CNI (aws-node daemonset)
-# - Installs Cilium via Helm in ENI mode with kube-proxy replacement
+# - Provisions EKS cluster (CoreDNS only — no aws-node/kube-proxy)
+# - Disables AWS VPC CNI (aws-node daemonset) so Cilium can own networking
+#
+# NOTE: Cilium is installed in the root module (aws/us-east-1/<env>/main.tf)
+# because provider blocks cannot be configured inside child modules.
 # ─────────────────────────────────────────────────────────────
 
 terraform {
@@ -12,10 +14,6 @@ terraform {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 5.0"
-    }
-    helm = {
-      source  = "hashicorp/helm"
-      version = "~> 2.0"
     }
     null = {
       source  = "hashicorp/null"
@@ -67,8 +65,7 @@ module "eks" {
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
 
-  # Only CoreDNS — no aws-node (VPC CNI) or kube-proxy
-  # Cilium replaces both
+  # CoreDNS only — Cilium replaces aws-node (VPC CNI) and kube-proxy
   cluster_addons = {
     coredns = { most_recent = true }
   }
@@ -90,8 +87,7 @@ module "eks" {
 }
 
 # ─── Disable aws-node DaemonSet ───────────────────────────────
-# Replaces aws-node container image with a no-op image
-# so Cilium can take full ownership of networking
+# Replaces aws-node image with a no-op so Cilium owns networking
 resource "null_resource" "disable_aws_node" {
   depends_on = [module.eks]
 
@@ -101,58 +97,5 @@ resource "null_resource" "disable_aws_node" {
       kubectl -n kube-system set image daemonset/aws-node \
         aws-node=public.ecr.aws/amazonlinux/amazonlinux:2 || true
     EOT
-  }
-}
-
-# ─── Helm Provider (authenticated via kubeconfig) ────────────
-provider "helm" {
-  kubernetes {
-    host                   = module.eks.cluster_endpoint
-    cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
-    exec {
-      api_version = "client.authentication.k8s.io/v1beta1"
-      command     = "aws"
-      args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name, "--region", var.region]
-    }
-  }
-}
-
-# ─── Cilium ───────────────────────────────────────────────────
-resource "helm_release" "cilium" {
-  depends_on = [null_resource.disable_aws_node]
-
-  name       = "cilium"
-  repository = "https://helm.cilium.io/"
-  chart      = "cilium"
-  version    = var.cilium_version
-  namespace  = "kube-system"
-
-  set {
-    name  = "eni.enabled"
-    value = "true"
-  }
-  set {
-    name  = "ipam.mode"
-    value = "eni"
-  }
-  set {
-    name  = "egressMasqueradeInterfaces"
-    value = "eth0"
-  }
-  set {
-    name  = "tunnel"
-    value = "disabled"
-  }
-  set {
-    name  = "kubeProxyReplacement"
-    value = "true"
-  }
-  set {
-    name  = "k8sServiceHost"
-    value = module.eks.cluster_endpoint
-  }
-  set {
-    name  = "k8sServicePort"
-    value = "443"
   }
 }
