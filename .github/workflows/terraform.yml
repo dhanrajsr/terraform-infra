@@ -34,7 +34,7 @@ permissions:
 jobs:
   terraform-aws:
     name: "Terraform · AWS · ${{ inputs.environment || 'dev' }}"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, docker, linux]
     if: ${{ github.event_name == 'push' || inputs.cloud == 'aws' }}
 
     defaults:
@@ -144,7 +144,7 @@ jobs:
 # ─────────────────────────────────────────────────────────────
   terraform-azure:
     name: "Terraform · Azure · ${{ inputs.environment || 'dev' }}"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, docker, linux]
     if: ${{ github.event_name == 'push' || inputs.cloud == 'azure' }}
 
     defaults:
@@ -233,7 +233,7 @@ jobs:
 # ─────────────────────────────────────────────────────────────
   terraform-gcp:
     name: "Terraform · GCP · ${{ inputs.environment || 'dev' }}"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, docker, linux]
     if: ${{ github.event_name == 'push' || inputs.cloud == 'gcp' }}
 
     defaults:
