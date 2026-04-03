@@ -51,14 +51,12 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "~1.5"
+      - name: Verify Terraform
+        run: terraform version
 
       - name: Terraform Format Check
         run: terraform fmt -check -recursive
-        working-directory: .
+        working-directory: aws/us-east-1/${{ inputs.environment || 'dev' }}
 
       - name: Terraform Init
         run: terraform init
@@ -100,14 +98,6 @@ jobs:
       # ── Cilium installed via helm CLI (not Terraform) ──────────────────
       # Helm provider cannot authenticate before cluster exists at init time.
       # Using helm CLI after cluster is ready is the reliable approach.
-      - name: Install kubectl
-        if: inputs.action == 'apply' && github.ref == 'refs/heads/main'
-        uses: azure/setup-kubectl@v4
-
-      - name: Install Helm
-        if: inputs.action == 'apply' && github.ref == 'refs/heads/main'
-        uses: azure/setup-helm@v4
-
       - name: Update kubeconfig
         if: inputs.action == 'apply' && github.ref == 'refs/heads/main'
         run: |
@@ -162,10 +152,8 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "~1.5"
+      - name: Verify Terraform
+        run: terraform version
 
       - name: Terraform Init
         run: terraform init
@@ -250,10 +238,8 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account:            ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "~1.5"
+      - name: Verify Terraform
+        run: terraform version
 
       - name: Terraform Init
         run: terraform init
