@@ -56,10 +56,10 @@ resource "azurerm_kubernetes_cluster" "main" {
   kubernetes_version  = var.kubernetes_version
 
   default_node_pool {
-    name           = "system"
-    node_count     = var.node_count
-    vm_size        = var.node_vm_size
-    vnet_subnet_id = azurerm_subnet.nodes.id
+    name            = "system"
+    node_count      = var.node_count
+    vm_size         = var.node_vm_size
+    vnet_subnet_id  = azurerm_subnet.nodes.id
     os_disk_size_gb = 50
   }
 

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd /Users/dhanrajsubbaian/Dhanraj/Learning/ADK/terraform-infra*)",
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(terraform *)",
+      "Bash(grep *)",
+      "Bash(find *)"
+    ]
+  }
+}
