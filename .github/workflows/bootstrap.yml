@@ -53,7 +53,42 @@ jobs:
             --name ${{ env.CLUSTER_NAME }}
 
       # ─────────────────────────────────────────
-      # Step 2: Add Helm repos
+      # Step 2: Pre-flight cleanup
+      # Remove leftover cluster-scoped resources
+      # from any previous non-Helm installation
+      # ─────────────────────────────────────────
+      - name: Pre-flight cleanup (remove orphaned cluster-scoped resources)
+        run: |
+          # ArgoCD cluster-scoped resources
+          kubectl delete clusterrole \
+            argocd-application-controller \
+            argocd-applicationset-controller \
+            argocd-server \
+            argocd-repo-server \
+            2>/dev/null || true
+
+          kubectl delete clusterrolebinding \
+            argocd-application-controller \
+            argocd-applicationset-controller \
+            argocd-server \
+            2>/dev/null || true
+
+          # Argo Rollouts cluster-scoped resources
+          kubectl delete clusterrole \
+            argo-rollouts \
+            argo-rollouts-aggregate-to-admin \
+            argo-rollouts-aggregate-to-edit \
+            argo-rollouts-aggregate-to-view \
+            2>/dev/null || true
+
+          kubectl delete clusterrolebinding \
+            argo-rollouts \
+            2>/dev/null || true
+
+          echo "Pre-flight cleanup done"
+
+      # ─────────────────────────────────────────
+      # Step 3: Add Helm repos
       # ─────────────────────────────────────────
       - name: Add Helm repositories
         run: |
