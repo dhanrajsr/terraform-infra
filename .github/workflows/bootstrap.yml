@@ -1,0 +1,199 @@
+name: EKS Bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      cluster:
+        description: "EKS cluster name"
+        required: true
+        type: choice
+        options:
+          - eks-dev-us-east-1
+        default: eks-dev-us-east-1
+      region:
+        description: "AWS region"
+        required: true
+        type: choice
+        options:
+          - us-east-1
+        default: us-east-1
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  bootstrap:
+    name: Bootstrap EKS Cluster Tools
+    runs-on: [self-hosted, docker, linux]
+
+    env:
+      CLUSTER_NAME:       ${{ inputs.cluster }}
+      AWS_REGION:         ${{ inputs.region }}
+      ARGOCD_NAMESPACE:   argocd
+      ROLLOUTS_NAMESPACE: argo-rollouts
+      LBC_ROLE_ARN:       arn:aws:iam::497041484428:role/AmazonEKSLoadBalancerControllerRole
+      VPC_ID:             vpc-08b7f3452f8161d71
+      ACM_CERT_ARN:       arn:aws:acm:us-east-1:497041484428:certificate/aeb50a3f-01af-4fbc-9165-45acde587dee
+
+    steps:
+      # ─────────────────────────────────────────
+      # Step 1: Auth & Kubeconfig
+      # ─────────────────────────────────────────
+      - name: Configure AWS credentials (OIDC — keyless)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set kubeconfig to EKS cluster
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.CLUSTER_NAME }}
+
+      # ─────────────────────────────────────────
+      # Step 2: Add Helm repos
+      # ─────────────────────────────────────────
+      - name: Add Helm repositories
+        run: |
+          helm repo add argo https://argoproj.github.io/argo-helm
+          helm repo add eks  https://aws.github.io/eks-charts
+          helm repo update
+
+      # ─────────────────────────────────────────
+      # Step 3: Install ArgoCD
+      # ─────────────────────────────────────────
+      - name: Install ArgoCD
+        run: |
+          helm upgrade --install argocd argo/argo-cd \
+            --namespace ${{ env.ARGOCD_NAMESPACE }} \
+            --create-namespace \
+            --set server.service.type=ClusterIP \
+            --set configs.params."server\.insecure"=true \
+            --wait --timeout=300s
+
+      # ─────────────────────────────────────────
+      # Step 4: Install Argo Rollouts
+      # ─────────────────────────────────────────
+      - name: Install Argo Rollouts
+        run: |
+          helm upgrade --install argo-rollouts argo/argo-rollouts \
+            --namespace ${{ env.ROLLOUTS_NAMESPACE }} \
+            --create-namespace \
+            --wait --timeout=120s
+
+      # ─────────────────────────────────────────
+      # Step 5: Install AWS Load Balancer Controller
+      # ─────────────────────────────────────────
+      - name: Install AWS Load Balancer Controller
+        run: |
+          helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+            --namespace kube-system \
+            --set clusterName=${{ env.CLUSTER_NAME }} \
+            --set serviceAccount.create=true \
+            --set serviceAccount.name=aws-load-balancer-controller \
+            --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=${{ env.LBC_ROLE_ARN }}" \
+            --set region=${{ env.AWS_REGION }} \
+            --set vpcId=${{ env.VPC_ID }} \
+            --wait --timeout=120s
+
+      # ─────────────────────────────────────────
+      # Step 6: Apply ArgoCD Ingress (ALB)
+      # Bootstrap step — ArgoCD manages everything
+      # else but its own ingress is applied once here
+      # ─────────────────────────────────────────
+      - name: Apply ArgoCD Ingress
+        run: |
+          kubectl apply -f - <<EOF
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: argocd-ingress
+            namespace: ${{ env.ARGOCD_NAMESPACE }}
+            annotations:
+              alb.ingress.kubernetes.io/scheme: internet-facing
+              alb.ingress.kubernetes.io/target-type: ip
+              alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+              alb.ingress.kubernetes.io/ssl-redirect: "443"
+              alb.ingress.kubernetes.io/certificate-arn: ${{ env.ACM_CERT_ARN }}
+              alb.ingress.kubernetes.io/backend-protocol: HTTP
+              alb.ingress.kubernetes.io/group.name: platform
+          spec:
+            ingressClassName: alb
+            rules:
+              - host: argocd.devopscab.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: argocd-server
+                          port:
+                            number: 80
+          EOF
+
+      # ─────────────────────────────────────────
+      # Step 7: Wait for ALB to be provisioned
+      # ─────────────────────────────────────────
+      - name: Wait for ArgoCD ALB to be ready
+        run: |
+          echo "Waiting for ALB hostname to be assigned..."
+          for i in $(seq 1 30); do
+            HOSTNAME=$(kubectl get ingress argocd-ingress -n ${{ env.ARGOCD_NAMESPACE }} \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
+            if [ -n "$HOSTNAME" ]; then
+              echo "ALB provisioned: $HOSTNAME"
+              break
+            fi
+            echo "Attempt $i/30 — waiting 10s..."
+            sleep 10
+          done
+          if [ -z "$HOSTNAME" ]; then
+            echo "WARNING: ALB not provisioned within 5 minutes. Check AWS LBC logs."
+          fi
+
+      # ─────────────────────────────────────────
+      # Step 8: Update Route 53 CNAME for ArgoCD
+      # ─────────────────────────────────────────
+      - name: Update Route 53 CNAME for argocd.devopscab.com
+        run: |
+          HOSTNAME=$(kubectl get ingress argocd-ingress -n ${{ env.ARGOCD_NAMESPACE }} \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
+
+          if [ -z "$HOSTNAME" ]; then
+            echo "Skipping Route 53 update — ALB hostname not available"
+            exit 0
+          fi
+
+          aws route53 change-resource-record-sets \
+            --hosted-zone-id Z0109380NA1UD90BNT9T \
+            --change-batch "{
+              \"Changes\": [{
+                \"Action\": \"UPSERT\",
+                \"ResourceRecordSet\": {
+                  \"Name\": \"argocd.devopscab.com\",
+                  \"Type\": \"CNAME\",
+                  \"TTL\": 300,
+                  \"ResourceRecords\": [{\"Value\": \"${HOSTNAME}\"}]
+                }
+              }]
+            }"
+          echo "Route 53 updated: argocd.devopscab.com → ${HOSTNAME}"
+
+      # ─────────────────────────────────────────
+      # Step 9: Print ArgoCD access details
+      # ─────────────────────────────────────────
+      - name: Print ArgoCD access info
+        run: |
+          echo "============================================"
+          echo " ArgoCD Bootstrap Complete"
+          echo "============================================"
+          echo " URL      : https://argocd.devopscab.com"
+          echo " Username : admin"
+          echo -n " Password : "
+          kubectl -n ${{ env.ARGOCD_NAMESPACE }} get secret argocd-initial-admin-secret \
+            -o jsonpath="{.data.password}" | base64 -d
+          echo ""
+          echo "============================================"
