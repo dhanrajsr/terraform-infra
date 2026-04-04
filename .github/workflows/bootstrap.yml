@@ -35,6 +35,7 @@ jobs:
       LBC_ROLE_ARN:       arn:aws:iam::497041484428:role/AmazonEKSLoadBalancerControllerRole
       VPC_ID:             vpc-08b7f3452f8161d71
       ACM_CERT_ARN:       arn:aws:acm:us-east-1:497041484428:certificate/aeb50a3f-01af-4fbc-9165-45acde587dee
+      HOSTED_ZONE_ID:     Z0109380NA1UD90BNT9T
 
     steps:
       # ─────────────────────────────────────────
@@ -49,43 +50,55 @@ jobs:
       - name: Set kubeconfig to EKS cluster
         run: |
           aws eks update-kubeconfig \
-            --region ${{ env.AWS_REGION }} \
-            --name ${{ env.CLUSTER_NAME }}
+            --region "$AWS_REGION" \
+            --name "$CLUSTER_NAME"
 
       # ─────────────────────────────────────────
       # Step 2: Pre-flight cleanup
-      # Remove leftover cluster-scoped resources
-      # from any previous non-Helm installation
+      # Removes orphaned cluster-scoped resources
+      # and unblocks stuck Terminating namespaces
+      # Safe to re-run — all commands use || true
       # ─────────────────────────────────────────
-      - name: Pre-flight cleanup (remove orphaned cluster-scoped resources)
+      - name: Pre-flight cleanup
         run: |
-          # ArgoCD cluster-scoped resources
-          kubectl delete clusterrole \
-            argocd-application-controller \
-            argocd-applicationset-controller \
-            argocd-server \
-            argocd-repo-server \
-            2>/dev/null || true
+          # Unblock any stuck Terminating namespaces
+          for ns in argocd argo-rollouts staging production; do
+            PHASE=$(kubectl get namespace "$ns" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+            if [ "$PHASE" = "Terminating" ]; then
+              echo "Unblocking stuck namespace: $ns"
 
-          kubectl delete clusterrolebinding \
-            argocd-application-controller \
-            argocd-applicationset-controller \
-            argocd-server \
-            2>/dev/null || true
+              # Clear stuck ingress finalizers
+              kubectl get ingress -n "$ns" -o name 2>/dev/null | \
+                xargs -I{} kubectl patch {} -n "$ns" \
+                  --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+                  2>/dev/null || true
 
-          # Argo Rollouts cluster-scoped resources
-          kubectl delete clusterrole \
-            argo-rollouts \
-            argo-rollouts-aggregate-to-admin \
-            argo-rollouts-aggregate-to-edit \
-            argo-rollouts-aggregate-to-view \
-            2>/dev/null || true
+              # Clear namespace finalizers via finalize API
+              kubectl get namespace "$ns" -o json 2>/dev/null | \
+                jq '.spec.finalizers = []' | \
+                kubectl replace --raw "/api/v1/namespaces/$ns/finalize" -f - \
+                2>/dev/null || true
 
-          kubectl delete clusterrolebinding \
-            argo-rollouts \
-            2>/dev/null || true
+              kubectl wait --for=delete "namespace/$ns" --timeout=60s 2>/dev/null || true
+              echo "Namespace $ns cleared"
+            fi
+          done
 
-          echo "Pre-flight cleanup done"
+          # Remove orphaned ArgoCD cluster-scoped resources
+          for res in argocd-application-controller argocd-applicationset-controller \
+                     argocd-server argocd-repo-server; do
+            kubectl delete clusterrole "$res" 2>/dev/null || true
+            kubectl delete clusterrolebinding "$res" 2>/dev/null || true
+          done
+
+          # Remove orphaned Argo Rollouts cluster-scoped resources
+          for res in argo-rollouts argo-rollouts-aggregate-to-admin \
+                     argo-rollouts-aggregate-to-edit argo-rollouts-aggregate-to-view; do
+            kubectl delete clusterrole "$res" 2>/dev/null || true
+          done
+          kubectl delete clusterrolebinding argo-rollouts 2>/dev/null || true
+
+          echo "Pre-flight cleanup complete"
 
       # ─────────────────────────────────────────
       # Step 3: Add Helm repos
@@ -97,61 +110,61 @@ jobs:
           helm repo update
 
       # ─────────────────────────────────────────
-      # Step 3: Install ArgoCD
+      # Step 4: Install ArgoCD
       # ─────────────────────────────────────────
       - name: Install ArgoCD
         run: |
           helm upgrade --install argocd argo/argo-cd \
-            --namespace ${{ env.ARGOCD_NAMESPACE }} \
+            --namespace "$ARGOCD_NAMESPACE" \
             --create-namespace \
             --set server.service.type=ClusterIP \
             --set configs.params."server\.insecure"=true \
             --wait --timeout=300s
 
       # ─────────────────────────────────────────
-      # Step 4: Install Argo Rollouts
+      # Step 5: Install Argo Rollouts
       # ─────────────────────────────────────────
       - name: Install Argo Rollouts
         run: |
           helm upgrade --install argo-rollouts argo/argo-rollouts \
-            --namespace ${{ env.ROLLOUTS_NAMESPACE }} \
+            --namespace "$ROLLOUTS_NAMESPACE" \
             --create-namespace \
             --wait --timeout=120s
 
       # ─────────────────────────────────────────
-      # Step 5: Install AWS Load Balancer Controller
+      # Step 6: Install AWS Load Balancer Controller
       # ─────────────────────────────────────────
       - name: Install AWS Load Balancer Controller
         run: |
           helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
             --namespace kube-system \
-            --set clusterName=${{ env.CLUSTER_NAME }} \
+            --set clusterName="$CLUSTER_NAME" \
             --set serviceAccount.create=true \
             --set serviceAccount.name=aws-load-balancer-controller \
-            --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=${{ env.LBC_ROLE_ARN }}" \
-            --set region=${{ env.AWS_REGION }} \
-            --set vpcId=${{ env.VPC_ID }} \
+            --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=$LBC_ROLE_ARN" \
+            --set region="$AWS_REGION" \
+            --set vpcId="$VPC_ID" \
             --wait --timeout=120s
 
       # ─────────────────────────────────────────
-      # Step 6: Apply ArgoCD Ingress (ALB)
-      # Bootstrap step — ArgoCD manages everything
-      # else but its own ingress is applied once here
+      # Step 7: Apply ArgoCD Ingress (ALB)
+      # One-time bootstrap — ArgoCD manages all
+      # other Ingresses via GitOps after this
       # ─────────────────────────────────────────
       - name: Apply ArgoCD Ingress
         run: |
-          kubectl apply -f - <<EOF
+          cat <<EOF | kubectl apply -f -
           apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
             name: argocd-ingress
-            namespace: ${{ env.ARGOCD_NAMESPACE }}
+            namespace: ${ARGOCD_NAMESPACE}
             annotations:
               alb.ingress.kubernetes.io/scheme: internet-facing
               alb.ingress.kubernetes.io/target-type: ip
               alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
               alb.ingress.kubernetes.io/ssl-redirect: "443"
-              alb.ingress.kubernetes.io/certificate-arn: ${{ env.ACM_CERT_ARN }}
+              alb.ingress.kubernetes.io/certificate-arn: ${ACM_CERT_ARN}
               alb.ingress.kubernetes.io/backend-protocol: HTTP
               alb.ingress.kubernetes.io/group.name: platform
           spec:
@@ -170,55 +183,48 @@ jobs:
           EOF
 
       # ─────────────────────────────────────────
-      # Step 7: Wait for ALB to be provisioned
+      # Step 8: Wait for ALB to be provisioned
       # ─────────────────────────────────────────
-      - name: Wait for ArgoCD ALB to be ready
+      - name: Wait for ArgoCD ALB
         run: |
-          echo "Waiting for ALB hostname to be assigned..."
+          echo "Waiting for ALB hostname (up to 5 min)..."
+          HOSTNAME=""
           for i in $(seq 1 30); do
-            HOSTNAME=$(kubectl get ingress argocd-ingress -n ${{ env.ARGOCD_NAMESPACE }} \
-              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
+            HOSTNAME=$(kubectl get ingress argocd-ingress -n "$ARGOCD_NAMESPACE" \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
             if [ -n "$HOSTNAME" ]; then
               echo "ALB provisioned: $HOSTNAME"
               break
             fi
-            echo "Attempt $i/30 — waiting 10s..."
+            echo "  attempt $i/30 — waiting 10s..."
             sleep 10
           done
           if [ -z "$HOSTNAME" ]; then
-            echo "WARNING: ALB not provisioned within 5 minutes. Check AWS LBC logs."
+            echo "WARNING: ALB not provisioned within 5 minutes."
+            echo "Check AWS LBC logs: kubectl logs -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller"
           fi
 
       # ─────────────────────────────────────────
-      # Step 8: Update Route 53 CNAME for ArgoCD
+      # Step 9: Update Route 53 CNAME
       # ─────────────────────────────────────────
-      - name: Update Route 53 CNAME for argocd.devopscab.com
+      - name: Update Route 53 — argocd.devopscab.com
         run: |
-          HOSTNAME=$(kubectl get ingress argocd-ingress -n ${{ env.ARGOCD_NAMESPACE }} \
-            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
+          HOSTNAME=$(kubectl get ingress argocd-ingress -n "$ARGOCD_NAMESPACE" \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
 
           if [ -z "$HOSTNAME" ]; then
-            echo "Skipping Route 53 update — ALB hostname not available"
+            echo "Skipping Route 53 — ALB hostname not available yet"
             exit 0
           fi
 
           aws route53 change-resource-record-sets \
-            --hosted-zone-id Z0109380NA1UD90BNT9T \
-            --change-batch "{
-              \"Changes\": [{
-                \"Action\": \"UPSERT\",
-                \"ResourceRecordSet\": {
-                  \"Name\": \"argocd.devopscab.com\",
-                  \"Type\": \"CNAME\",
-                  \"TTL\": 300,
-                  \"ResourceRecords\": [{\"Value\": \"${HOSTNAME}\"}]
-                }
-              }]
-            }"
-          echo "Route 53 updated: argocd.devopscab.com → ${HOSTNAME}"
+            --hosted-zone-id "$HOSTED_ZONE_ID" \
+            --change-batch "{\"Changes\":[{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"argocd.devopscab.com\",\"Type\":\"CNAME\",\"TTL\":300,\"ResourceRecords\":[{\"Value\":\"${HOSTNAME}\"}]}}]}"
+
+          echo "Route 53 updated: argocd.devopscab.com -> ${HOSTNAME}"
 
       # ─────────────────────────────────────────
-      # Step 9: Print ArgoCD access details
+      # Step 10: Print access details
       # ─────────────────────────────────────────
       - name: Print ArgoCD access info
         run: |
@@ -228,7 +234,7 @@ jobs:
           echo " URL      : https://argocd.devopscab.com"
           echo " Username : admin"
           echo -n " Password : "
-          kubectl -n ${{ env.ARGOCD_NAMESPACE }} get secret argocd-initial-admin-secret \
+          kubectl -n "$ARGOCD_NAMESPACE" get secret argocd-initial-admin-secret \
             -o jsonpath="{.data.password}" | base64 -d
           echo ""
           echo "============================================"
