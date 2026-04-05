@@ -13,6 +13,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - runner_work:/tmp/runner/work
+      - ~/.aws:/root/.aws:ro
 
 volumes:
   runner_work:
+
+
