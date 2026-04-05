@@ -33,7 +33,6 @@ jobs:
       ARGOCD_NAMESPACE:   argocd
       ROLLOUTS_NAMESPACE: argo-rollouts
       LBC_ROLE_ARN:       arn:aws:iam::497041484428:role/AmazonEKSLoadBalancerControllerRole
-      VPC_ID:             vpc-08b7f3452f8161d71
       ACM_CERT_ARN:       arn:aws:acm:us-east-1:497041484428:certificate/aeb50a3f-01af-4fbc-9165-45acde587dee
       HOSTED_ZONE_ID:     Z0109380NA1UD90BNT9T
 
@@ -47,11 +46,20 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Set kubeconfig to EKS cluster
+      - name: Set kubeconfig and resolve VPC ID
         run: |
           aws eks update-kubeconfig \
             --region "$AWS_REGION" \
             --name "$CLUSTER_NAME"
+
+          # Resolve VPC ID dynamically from the cluster's VPC tag
+          VPC_ID=$(aws ec2 describe-vpcs \
+            --region "$AWS_REGION" \
+            --filters "Name=tag:Name,Values=${CLUSTER_NAME}-vpc" \
+            --query 'Vpcs[0].VpcId' \
+            --output text)
+          echo "VPC_ID=${VPC_ID}" >> "$GITHUB_ENV"
+          echo "Resolved VPC_ID: $VPC_ID"
 
       # ─────────────────────────────────────────
       # Step 2: Pre-flight cleanup
