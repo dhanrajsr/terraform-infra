@@ -21,10 +21,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       apt-transport-https \
     && rm -rf /var/lib/apt/lists/*
 
-# ── AWS CLI v2 ───────────────────────────────────────────────────────────────
+# ── AWS CLI v2 (base image ships with AWS CLI; --update upgrades it) ─────────
 RUN curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscli.zip \
     && unzip -q /tmp/awscli.zip -d /tmp \
-    && /tmp/aws/install \
+    && /tmp/aws/install --update \
     && rm -rf /tmp/aws /tmp/awscli.zip
 
 # ── Azure CLI ────────────────────────────────────────────────────────────────
