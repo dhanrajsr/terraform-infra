@@ -1,6 +1,6 @@
 services:
   github-runner-terraform:
-    image: dhanrajsr/github-runner-terraform:latest
+    image: dhanrajsubbaianind/github-runner-terraform:latest
     container_name: github-runner-terraform
     restart: unless-stopped
     environment:
