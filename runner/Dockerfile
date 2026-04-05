@@ -22,7 +22,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ── AWS CLI v2 (base image ships with AWS CLI; --update upgrades it) ─────────
-RUN curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscli.zip \
+RUN ARCH=$(uname -m) \
+    && if [ "$ARCH" = "aarch64" ]; then AWS_ARCH="aarch64"; else AWS_ARCH="x86_64"; fi \
+    && curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${AWS_ARCH}.zip" -o /tmp/awscli.zip \
     && unzip -q /tmp/awscli.zip -d /tmp \
     && /tmp/aws/install --update \
     && rm -rf /tmp/aws /tmp/awscli.zip
@@ -30,7 +32,7 @@ RUN curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tm
 # ── Azure CLI ────────────────────────────────────────────────────────────────
 RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
       | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft.gpg] \
        https://packages.microsoft.com/repos/azure-cli/ $(lsb_release -cs) main" \
        > /etc/apt/sources.list.d/azure-cli.list \
     && apt-get update \
@@ -48,24 +50,32 @@ RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Terraform ────────────────────────────────────────────────────────────────
-RUN curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip" \
+RUN ARCH=$(uname -m) \
+    && if [ "$ARCH" = "aarch64" ]; then TF_ARCH="arm64"; else TF_ARCH="amd64"; fi \
+    && curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${TF_ARCH}.zip" \
       -o /tmp/terraform.zip \
     && unzip -q /tmp/terraform.zip -d /usr/local/bin \
     && rm /tmp/terraform.zip \
     && chmod +x /usr/local/bin/terraform
 
 # ── kubectl ──────────────────────────────────────────────────────────────────
-RUN curl -fsSL "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+RUN ARCH=$(uname -m) \
+    && if [ "$ARCH" = "aarch64" ]; then K8S_ARCH="arm64"; else K8S_ARCH="amd64"; fi \
+    && curl -fsSL "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${K8S_ARCH}/kubectl" \
       -o /usr/local/bin/kubectl \
     && chmod +x /usr/local/bin/kubectl
 
 # ── Helm ─────────────────────────────────────────────────────────────────────
-RUN curl -fsSL "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" | \
-      tar -xz --strip-components=1 -C /usr/local/bin linux-amd64/helm \
+RUN ARCH=$(uname -m) \
+    && if [ "$ARCH" = "aarch64" ]; then HELM_ARCH="arm64"; else HELM_ARCH="amd64"; fi \
+    && curl -fsSL "https://get.helm.sh/helm-v${HELM_VERSION}-linux-${HELM_ARCH}.tar.gz" | \
+      tar -xz --strip-components=1 -C /usr/local/bin linux-${HELM_ARCH}/helm \
     && chmod +x /usr/local/bin/helm
 
 # ── ArgoCD CLI ───────────────────────────────────────────────────────────────
-RUN curl -fsSL "https://github.com/argoproj/argo-cd/releases/download/v${ARGOCD_VERSION}/argocd-linux-amd64" \
+RUN ARCH=$(uname -m) \
+    && if [ "$ARCH" = "aarch64" ]; then ARGOCD_ARCH="arm64"; else ARGOCD_ARCH="amd64"; fi \
+    && curl -fsSL "https://github.com/argoproj/argo-cd/releases/download/v${ARGOCD_VERSION}/argocd-linux-${ARGOCD_ARCH}" \
       -o /usr/local/bin/argocd \
     && chmod +x /usr/local/bin/argocd
 

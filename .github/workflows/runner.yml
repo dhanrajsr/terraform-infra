@@ -34,6 +34,7 @@ jobs:
           context: runner
           file: runner/Dockerfile
           push: ${{ inputs.push_image }}
+          platforms: linux/amd64,linux/arm64
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/github-runner-terraform:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/github-runner-terraform:${{ github.sha }}
