@@ -1,0 +1,18 @@
+services:
+  github-runner-terraform:
+    image: dhanrajsr/github-runner-terraform:latest
+    container_name: github-runner-terraform
+    restart: unless-stopped
+    environment:
+      REPO_URL:       https://github.com/dhanrajsr/terraform-infra
+      RUNNER_TOKEN:   ${RUNNER_TOKEN}
+      RUNNER_NAME:    docker-runner-terraform
+      RUNNER_WORKDIR: /tmp/runner/work
+      LABELS:         self-hosted,docker,linux
+      RUNNER_SCOPE:   repo
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - runner_work:/tmp/runner/work
+
+volumes:
+  runner_work:
