@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
       gnupg \
       lsb-release \
+      apt-transport-https \
     && rm -rf /var/lib/apt/lists/*
 
 # ── AWS CLI v2 ───────────────────────────────────────────────────────────────
@@ -25,6 +26,26 @@ RUN curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tm
     && unzip -q /tmp/awscli.zip -d /tmp \
     && /tmp/aws/install \
     && rm -rf /tmp/aws /tmp/awscli.zip
+
+# ── Azure CLI ────────────────────────────────────────────────────────────────
+RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+      | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] \
+       https://packages.microsoft.com/repos/azure-cli/ $(lsb_release -cs) main" \
+       > /etc/apt/sources.list.d/azure-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends azure-cli \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Google Cloud CLI ─────────────────────────────────────────────────────────
+RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+      | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] \
+       https://packages.cloud.google.com/apt cloud-sdk main" \
+       > /etc/apt/sources.list.d/google-cloud-sdk.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends google-cloud-cli \
+    && rm -rf /var/lib/apt/lists/*
 
 # ── Terraform ────────────────────────────────────────────────────────────────
 RUN curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip" \
@@ -50,6 +71,8 @@ RUN curl -fsSL "https://github.com/argoproj/argo-cd/releases/download/v${ARGOCD_
 
 # ── Verify installs ──────────────────────────────────────────────────────────
 RUN aws --version \
+    && az version \
+    && gcloud version \
     && terraform version \
     && kubectl version --client \
     && helm version \
