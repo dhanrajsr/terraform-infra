@@ -1,7 +1,35 @@
+# ─── EKS VPC + Private Subnets ───────────────────────────────
+data "aws_vpc" "eks" {
+  filter {
+    name   = "tag:Name"
+    values = ["eks-${var.environment}-us-east-1-vpc"]
+  }
+}
+
+data "aws_subnets" "private" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.eks.id]
+  }
+  filter {
+    name   = "tag:Name"
+    values = ["eks-${var.environment}-us-east-1-vpc-private-*"]
+  }
+}
+
+# ─── DB Subnet Group ──────────────────────────────────────────
+resource "aws_db_subnet_group" "school" {
+  name       = "school-${var.environment}"
+  subnet_ids = data.aws_subnets.private.ids
+
+  tags = merge(var.tags, { Name = "school-${var.environment}" })
+}
+
 # ─── Security Group ───────────────────────────────────────────
 resource "aws_security_group" "rds" {
   name        = "school-rds-${var.environment}"
   description = "Allow PostgreSQL access from Lambda and local dev"
+  vpc_id      = data.aws_vpc.eks.id
 
   ingress {
     from_port   = 5432
@@ -33,6 +61,7 @@ resource "aws_db_instance" "school" {
   username = var.db_username
   password = var.db_password
 
+  db_subnet_group_name   = aws_db_subnet_group.school.name
   publicly_accessible    = true       # For dev — Lambda outside VPC needs this
   skip_final_snapshot    = true       # Dev — no snapshot on destroy
   deletion_protection    = false
