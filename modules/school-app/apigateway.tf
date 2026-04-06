@@ -18,7 +18,7 @@ resource "aws_apigatewayv2_integration" "lambda" {
   api_id                 = aws_apigatewayv2_api.school.id
   integration_type       = "AWS_PROXY"
   integration_uri        = aws_lambda_function.school_api.invoke_arn
-  payload_format_version = "2.0"
+  payload_format_version = "1.0"
 }
 
 # ─── Catch-all Route → Lambda ─────────────────────────────────
