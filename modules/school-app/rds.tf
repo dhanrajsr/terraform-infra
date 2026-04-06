@@ -6,21 +6,21 @@ data "aws_vpc" "eks" {
   }
 }
 
-data "aws_subnets" "private" {
+data "aws_subnets" "public" {
   filter {
     name   = "vpc-id"
     values = [data.aws_vpc.eks.id]
   }
   filter {
     name   = "tag:Name"
-    values = ["eks-${var.environment}-us-east-1-vpc-private-*"]
+    values = ["eks-${var.environment}-us-east-1-vpc-public-*"]
   }
 }
 
 # ─── DB Subnet Group ──────────────────────────────────────────
 resource "aws_db_subnet_group" "school" {
   name       = "school-${var.environment}"
-  subnet_ids = data.aws_subnets.private.ids
+  subnet_ids = data.aws_subnets.public.ids
 
   tags = merge(var.tags, { Name = "school-${var.environment}" })
 }
