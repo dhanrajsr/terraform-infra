@@ -3,11 +3,15 @@ name: Terraform
 on:
   workflow_dispatch:
     inputs:
-      cloud:
-        description: "Cloud provider"
+      service:
+        description: "Service to provision"
         required: true
         type: choice
-        options: [aws, azure, gcp, school]
+        options:
+          - aws-eks
+          - aws-school
+          - azure-aks
+          - gcp-gke
       environment:
         description: "Environment"
         required: true
@@ -31,7 +35,7 @@ jobs:
   terraform-aws:
     name: "Terraform · AWS · ${{ inputs.environment || 'dev' }}"
     runs-on: [self-hosted, docker, linux]
-    if: ${{ github.event_name == 'push' || inputs.cloud == 'aws' }}
+    if: ${{ github.event_name == 'push' || inputs.service == 'aws-eks' }}
 
     defaults:
       run:
@@ -135,7 +139,7 @@ jobs:
   terraform-school:
     name: "Terraform · School · ${{ inputs.environment || 'dev' }}"
     runs-on: [self-hosted, docker, linux]
-    if: ${{ inputs.cloud == 'school' }}
+    if: ${{ inputs.service == 'aws-school' }}
 
     defaults:
       run:
@@ -184,7 +188,7 @@ jobs:
   terraform-azure:
     name: "Terraform · Azure · ${{ inputs.environment || 'dev' }}"
     runs-on: [self-hosted, docker, linux]
-    if: ${{ github.event_name == 'push' || inputs.cloud == 'azure' }}
+    if: ${{ github.event_name == 'push' || inputs.service == 'azure-aks' }}
 
     defaults:
       run:
@@ -271,7 +275,7 @@ jobs:
   terraform-gcp:
     name: "Terraform · GCP · ${{ inputs.environment || 'dev' }}"
     runs-on: [self-hosted, docker, linux]
-    if: ${{ github.event_name == 'push' || inputs.cloud == 'gcp' }}
+    if: ${{ github.event_name == 'push' || inputs.service == 'gcp-gke' }}
 
     defaults:
       run:
