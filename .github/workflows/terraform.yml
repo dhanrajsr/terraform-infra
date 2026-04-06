@@ -7,7 +7,7 @@ on:
         description: "Cloud provider"
         required: true
         type: choice
-        options: [aws, azure, gcp]
+        options: [aws, azure, gcp, school]
       environment:
         description: "Environment"
         required: true
@@ -35,7 +35,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: aws/us-east-1/${{ inputs.environment || 'dev' }}
+        working-directory: aws/us-east-1/${{ inputs.environment || 'dev' }}/eks
 
     steps:
       - name: Checkout
@@ -128,6 +128,55 @@ jobs:
       - name: Terraform Destroy
         if: inputs.action == 'destroy' && github.ref == 'refs/heads/main'
         run: terraform destroy -auto-approve
+
+# ─────────────────────────────────────────────────────────────
+# School App — Lambda + RDS + API Gateway
+# ─────────────────────────────────────────────────────────────
+  terraform-school:
+    name: "Terraform · School · ${{ inputs.environment || 'dev' }}"
+    runs-on: [self-hosted, docker, linux]
+    if: ${{ inputs.cloud == 'school' }}
+
+    defaults:
+      run:
+        working-directory: aws/us-east-1/dev/school
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan -no-color
+        env:
+          TF_VAR_school_db_password: ${{ secrets.SCHOOL_DB_PASSWORD }}
+
+      - name: Terraform Apply
+        if: inputs.action == 'apply' && github.ref == 'refs/heads/main'
+        run: terraform apply -auto-approve
+        env:
+          TF_VAR_school_db_password: ${{ secrets.SCHOOL_DB_PASSWORD }}
+
+      - name: Terraform Destroy
+        if: inputs.action == 'destroy' && github.ref == 'refs/heads/main'
+        run: terraform destroy -auto-approve
+        env:
+          TF_VAR_school_db_password: ${{ secrets.SCHOOL_DB_PASSWORD }}
+
+      - name: Print Outputs
+        if: inputs.action == 'apply'
+        run: terraform output
 
 # ─────────────────────────────────────────────────────────────
 # Azure — AKS
