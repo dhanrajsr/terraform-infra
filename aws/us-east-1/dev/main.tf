@@ -47,3 +47,21 @@ module "eks" {
     managed_by  = "terraform"
   }
 }
+
+# ─── School App (Lambda + RDS + API Gateway) ─────────────────
+module "school_app" {
+  source = "../../../modules/school-app"
+
+  environment       = var.environment
+  region            = var.region
+  db_password       = var.school_db_password
+  lambda_jar_bucket = "school-lambda-jar-497041484428-${var.environment}"
+
+  tags = {
+    environment = var.environment
+    cloud       = "aws"
+    region      = var.region
+    managed_by  = "terraform"
+    app         = "school"
+  }
+}

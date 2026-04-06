@@ -37,3 +37,9 @@ variable "cilium_version" {
   type    = string
   default = "1.16.0"
 }
+
+variable "school_db_password" {
+  description = "Master password for school RDS PostgreSQL"
+  type        = string
+  sensitive   = true
+}

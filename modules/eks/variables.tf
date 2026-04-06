@@ -70,6 +70,12 @@ variable "cilium_version" {
   default     = "1.16.0"
 }
 
+variable "admin_arns" {
+  description = "List of IAM ARNs (users/roles) to grant EKS cluster-admin access"
+  type        = list(string)
+  default     = []
+}
+
 variable "tags" {
   description = "Common tags applied to all resources"
   type        = map(string)

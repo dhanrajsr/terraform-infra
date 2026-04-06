@@ -87,6 +87,19 @@ module "eks" {
   # Works for both GitHub Actions (OIDC role) and local (root/IAM user)
   enable_cluster_creator_admin_permissions = true
 
+  # Additional IAM principals with cluster-admin access
+  access_entries = {
+    for arn in var.admin_arns : arn => {
+      principal_arn = arn
+      policy_associations = {
+        admin = {
+          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          access_scope = { type = "cluster" }
+        }
+      }
+    }
+  }
+
   tags = var.tags
 }
 

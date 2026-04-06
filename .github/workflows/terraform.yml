@@ -64,6 +64,8 @@ jobs:
         id: plan
         run: terraform plan -out=tfplan -no-color
         continue-on-error: true
+        env:
+          TF_VAR_school_db_password: ${{ secrets.SCHOOL_DB_PASSWORD }}
 
       - name: Post Plan to PR
         if: github.event_name == 'pull_request'
@@ -90,6 +92,8 @@ jobs:
       - name: Terraform Apply
         if: inputs.action == 'apply' && github.ref == 'refs/heads/main'
         run: terraform apply -auto-approve
+        env:
+          TF_VAR_school_db_password: ${{ secrets.SCHOOL_DB_PASSWORD }}
 
       # ── Cilium installed via helm CLI (not Terraform) ──────────────────
       # Helm provider cannot authenticate before cluster exists at init time.
