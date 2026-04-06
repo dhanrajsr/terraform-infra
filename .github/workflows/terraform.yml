@@ -10,6 +10,7 @@ on:
         options:
           - aws-eks
           - aws-school
+          - aws-school-ui
           - azure-aks
           - gcp-gke
       environment:
@@ -330,6 +331,51 @@ jobs:
       - name: Terraform Apply
         if: inputs.action == 'apply' && github.ref == 'refs/heads/main'
         run: terraform apply tfplan
+
+      - name: Terraform Destroy
+        if: inputs.action == 'destroy' && github.ref == 'refs/heads/main'
+        run: terraform destroy -auto-approve
+
+# ─────────────────────────────────────────────────────────────
+# School UI — S3 + CloudFront
+# ─────────────────────────────────────────────────────────────
+  terraform-school-ui:
+    name: "Terraform · School UI · ${{ inputs.environment || 'dev' }}"
+    runs-on: [self-hosted, docker, linux]
+    if: ${{ inputs.service == 'aws-school-ui' }}
+
+    defaults:
+      run:
+        working-directory: aws/us-east-1/${{ inputs.environment || 'dev' }}/school-ui
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -out=tfplan -no-color
+        continue-on-error: true
+
+      - name: Terraform Apply
+        if: inputs.action == 'apply' && github.ref == 'refs/heads/main'
+        run: terraform apply tfplan
+
+      - name: Print Outputs
+        if: inputs.action == 'apply'
+        run: terraform output
 
       - name: Terraform Destroy
         if: inputs.action == 'destroy' && github.ref == 'refs/heads/main'
