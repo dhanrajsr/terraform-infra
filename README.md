@@ -11,6 +11,9 @@
 3. [Repositories](#repositories)
 4. [Infrastructure Components](#infrastructure-components)
 5. [Self-Hosted GitHub Runners](#self-hosted-github-runners)
+   - [First-Time Runner Setup](#first-time-runner-setup)
+   - [Re-registering Runners](#re-registering-runners-after-token-expiry-or-corruption)
+   - [Runner Management Reference](#runner-management-reference)
 6. [Prerequisites](#prerequisites)
 7. [Deployment Order](#deployment-order)
 8. [Step 1 — Provision Infrastructure (Terraform)](#step-1--provision-infrastructure-terraform)
@@ -156,7 +159,22 @@ State backend: S3 bucket `aws-terraform-state-497041484428` + DynamoDB table `te
 
 ## Self-Hosted GitHub Runners
 
-All CI/CD runs on self-hosted Docker runners (not GitHub-hosted runners).
+All CI/CD pipelines run on self-hosted Docker containers on your local Mac — not on GitHub-hosted runners.
+This avoids GitHub Actions minute limits and allows the runners to access your local Docker environment.
+
+### How It Works
+
+```
+GitHub Actions job triggers
+         ↓
+GitHub looks for a runner with matching labels (self-hosted, docker, linux)
+         ↓
+Docker container (running on your Mac) picks up the job
+         ↓
+Job runs inside the container using tools pre-installed in the image
+         ↓
+Results reported back to GitHub
+```
 
 ### Runner Images
 
@@ -164,16 +182,17 @@ All CI/CD runs on self-hosted Docker runners (not GitHub-hosted runners).
 
 Used by: `terraform-infra`
 
-Tools installed:
-- AWS CLI v2 (arch-aware: amd64/arm64)
-- Azure CLI
-- Google Cloud CLI
-- Terraform 1.10.5
-- kubectl 1.32.0
-- Helm 3.17.1
-- ArgoCD CLI 2.14.4
+| Tool | Version |
+|------|---------|
+| AWS CLI v2 | latest (arch-aware: amd64/arm64) |
+| Azure CLI | latest |
+| Google Cloud CLI | latest |
+| Terraform | 1.10.5 |
+| kubectl | 1.32.0 |
+| Helm | 3.17.1 |
+| ArgoCD CLI | 2.14.4 |
 
-Build:
+Build the image:
 ```
 terraform-infra → Actions → Build Terraform Runner Image → Run workflow
 ```
@@ -182,39 +201,146 @@ terraform-infra → Actions → Build Terraform Runner Image → Run workflow
 
 Used by: `school-api-lambda`, `school-ui`
 
-Tools installed:
-- AWS CLI v2 (arch-aware: amd64/arm64)
-- Java 21 (Eclipse Temurin JDK)
-- Maven 3.9.9
-- Node.js 20 + npm
+| Tool | Version |
+|------|---------|
+| AWS CLI v2 | latest (arch-aware: amd64/arm64) |
+| Java | 21 (Eclipse Temurin JDK) |
+| Maven | 3.9.9 |
+| Node.js | 20 |
+| npm | bundled with Node.js |
 
-Build:
+Build the image:
 ```
 terraform-infra → Actions → Build School Runner Image → Run workflow
 ```
 
-### Registering Runners
+---
 
-Generate a registration token for each repo:
+### First-Time Runner Setup
+
+Run these commands once to register and start all 3 runners.
+
+#### Step 1 — Generate Registration Tokens
+
+Tokens expire after 1 hour — generate them immediately before starting containers.
+
 ```bash
-gh api --method POST repos/dhanrajsr/<repo>/actions/runners/registration-token \
-  --jq '.token'
+TOKEN_TERRAFORM=$(gh api --method POST \
+  repos/dhanrajsr/terraform-infra/actions/runners/registration-token --jq '.token')
+
+TOKEN_LAMBDA=$(gh api --method POST \
+  repos/dhanrajsr/school-api-lambda/actions/runners/registration-token --jq '.token')
+
+TOKEN_UI=$(gh api --method POST \
+  repos/dhanrajsr/school-ui/actions/runners/registration-token --jq '.token')
 ```
 
-Start runner container:
+#### Step 2 — Start Runner Containers
+
 ```bash
-docker run -d \
-  -e REPO_URL=https://github.com/dhanrajsr/<repo> \
-  -e RUNNER_TOKEN=<token> \
-  -e RUNNER_NAME=runner-<repo> \
+# Terraform runner
+docker run -d --name runner-terraform --restart unless-stopped \
+  -e REPO_URL=https://github.com/dhanrajsr/terraform-infra \
+  -e RUNNER_TOKEN=$TOKEN_TERRAFORM \
+  -e RUNNER_NAME=runner-terraform \
   -e LABELS=self-hosted,docker,linux \
+  -e RUNNER_WORKDIR=/tmp/runner \
+  dhanrajsubbaianind/github-runner-terraform:latest
+
+# school-api-lambda runner
+docker run -d --name runner-school-api-lambda --restart unless-stopped \
+  -e REPO_URL=https://github.com/dhanrajsr/school-api-lambda \
+  -e RUNNER_TOKEN=$TOKEN_LAMBDA \
+  -e RUNNER_NAME=runner-school-api-lambda \
+  -e LABELS=self-hosted,docker,linux \
+  -e RUNNER_WORKDIR=/tmp/runner \
+  dhanrajsubbaianind/github-runner-school:latest
+
+# school-ui runner
+docker run -d --name runner-school-ui --restart unless-stopped \
+  -e REPO_URL=https://github.com/dhanrajsr/school-ui \
+  -e RUNNER_TOKEN=$TOKEN_UI \
+  -e RUNNER_NAME=runner-school-ui \
+  -e LABELS=self-hosted,docker,linux \
+  -e RUNNER_WORKDIR=/tmp/runner \
   dhanrajsubbaianind/github-runner-school:latest
 ```
 
-Verify runner is online:
+> `--restart unless-stopped` ensures Docker auto-restarts containers on Mac reboot — **no need to re-register after restart**.
+
+#### Step 3 — Verify Runners Are Online
+
 ```bash
-gh api repos/dhanrajsr/<repo>/actions/runners --jq '.runners[] | {name, status}'
+gh api repos/dhanrajsr/terraform-infra/actions/runners \
+  --jq '.runners[] | {name, status}'
+
+gh api repos/dhanrajsr/school-api-lambda/actions/runners \
+  --jq '.runners[] | {name, status}'
+
+gh api repos/dhanrajsr/school-ui/actions/runners \
+  --jq '.runners[] | {name, status}'
 ```
+
+Expected output:
+```json
+{"name":"runner-terraform","status":"online"}
+{"name":"runner-school-api-lambda","status":"online"}
+{"name":"runner-school-ui","status":"online"}
+```
+
+---
+
+### Re-registering Runners (After Token Expiry or Corruption)
+
+If runners show `offline` and fail with `Not Found` or `Not configured`, the registration is stale.
+Follow these steps to clean up and re-register:
+
+#### Step 1 — Stop and Remove Old Containers
+
+```bash
+docker rm -f runner-terraform runner-school-api-lambda runner-school-ui
+```
+
+#### Step 2 — Remove Stale Registrations from GitHub
+
+```bash
+for repo in terraform-infra school-api-lambda school-ui; do
+  IDS=$(gh api repos/dhanrajsr/$repo/actions/runners \
+    --jq '.runners[] | select(.status=="offline") | .id')
+  for id in $IDS; do
+    gh api --method DELETE repos/dhanrajsr/$repo/actions/runners/$id \
+      && echo "Removed stale runner $id from $repo"
+  done
+done
+```
+
+> If a runner is currently executing a job it cannot be deleted — it will disappear automatically after the job finishes.
+
+#### Step 3 — Re-register
+
+Follow [First-Time Runner Setup](#first-time-runner-setup) from Step 1 above.
+
+---
+
+### Runner Management Reference
+
+| Task | Command |
+|------|---------|
+| Check runner status | `docker ps \| grep runner` |
+| View runner logs | `docker logs runner-terraform -f` |
+| Stop a runner | `docker stop runner-terraform` |
+| Start a stopped runner | `docker start runner-terraform` |
+| Remove a runner | `docker rm -f runner-terraform` |
+| List GitHub registrations | `gh api repos/dhanrajsr/<repo>/actions/runners --jq '.runners[]'` |
+
+### Why Runners Go Offline After Mac Reboot
+
+Docker containers started **without** `--restart unless-stopped` stop when the Mac shuts down and do not restart automatically. The runner process inside registers a token at startup — if the container is recreated it needs a fresh token.
+
+With `--restart unless-stopped`:
+- Docker restarts the container after Mac reboot
+- The runner reconnects to GitHub using its persisted registration (not the token — token is only needed once)
+- No manual intervention needed
 
 ---
 
