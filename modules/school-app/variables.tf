@@ -43,6 +43,12 @@ variable "custom_domain" {
   default     = ""
 }
 
+variable "ui_domain" {
+  description = "CloudFront domain of the school UI (used for Cognito callback URLs)"
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "Common tags"
   type        = map(string)

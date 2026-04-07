@@ -30,6 +30,7 @@ module "school_app" {
   db_password       = var.school_db_password
   lambda_jar_bucket = "school-lambda-jar-497041484428-${var.environment}"
   custom_domain     = "school-api.devopscab.com"
+  ui_domain         = "school.devopscab.com"
 
   tags = {
     environment = var.environment

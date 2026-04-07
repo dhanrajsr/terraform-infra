@@ -1,4 +1,4 @@
-# ─── HTTP API Gateway ─────────────────────────────────────────
+# ─── HTTP API Gateway ─────────────────────────────────────────────
 resource "aws_apigatewayv2_api" "school" {
   name          = "school-api-${var.environment}"
   protocol_type = "HTTP"
@@ -13,7 +13,7 @@ resource "aws_apigatewayv2_api" "school" {
   tags = merge(var.tags, { Name = "school-api-${var.environment}" })
 }
 
-# ─── Lambda Integration ───────────────────────────────────────
+# ─── Lambda Integration ───────────────────────────────────────────
 resource "aws_apigatewayv2_integration" "lambda" {
   api_id                 = aws_apigatewayv2_api.school.id
   integration_type       = "AWS_PROXY"
@@ -21,18 +21,40 @@ resource "aws_apigatewayv2_integration" "lambda" {
   payload_format_version = "1.0"
 }
 
-# ─── Catch-all Route → Lambda ─────────────────────────────────
+# ─── JWT Authorizer (Cognito) ─────────────────────────────────────
+resource "aws_apigatewayv2_authorizer" "cognito" {
+  api_id           = aws_apigatewayv2_api.school.id
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.Authorization"]
+  name             = "cognito-jwt-authorizer"
+
+  jwt_configuration {
+    audience = [aws_cognito_user_pool_client.web.id]
+    issuer   = "https://cognito-idp.${var.region}.amazonaws.com/${aws_cognito_user_pool.school.id}"
+  }
+}
+
+# ─── Catch-all Route → Lambda (JWT protected) ────────────────────
 resource "aws_apigatewayv2_route" "default" {
   api_id    = aws_apigatewayv2_api.school.id
   route_key = "$default"
   target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
 }
 
-# ─── Auto-deploy Stage ────────────────────────────────────────
+# ─── Auto-deploy Stage ────────────────────────────────────────────
 resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.school.id
   name        = "$default"
   auto_deploy = true
+
+  # Throttling — 100 requests/sec burst, 50 steady-state
+  default_route_settings {
+    throttling_burst_limit = 100
+    throttling_rate_limit  = 50
+  }
 
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.api_gateway.arn
@@ -45,13 +67,15 @@ resource "aws_apigatewayv2_stage" "default" {
       status         = "$context.status"
       protocol       = "$context.protocol"
       responseLength = "$context.responseLength"
+      authorizer     = "$context.authorizer.principalId"
+      userEmail      = "$context.authorizer.claims.email"
     })
   }
 
   tags = var.tags
 }
 
-# ─── CloudWatch Log Group ─────────────────────────────────────
+# ─── CloudWatch Log Group ─────────────────────────────────────────
 resource "aws_cloudwatch_log_group" "api_gateway" {
   name              = "/aws/apigateway/school-api-${var.environment}"
   retention_in_days = 7
@@ -66,7 +90,7 @@ resource "aws_cloudwatch_log_group" "lambda" {
   tags = var.tags
 }
 
-# ─── ACM Certificate for custom domain ───────────────────────
+# ─── ACM Certificate for custom domain ───────────────────────────
 resource "aws_acm_certificate" "api" {
   count             = var.custom_domain != "" ? 1 : 0
   domain_name       = var.custom_domain
@@ -79,7 +103,7 @@ resource "aws_acm_certificate" "api" {
   }
 }
 
-# ─── API Gateway Custom Domain ────────────────────────────────
+# ─── API Gateway Custom Domain ────────────────────────────────────
 resource "aws_apigatewayv2_domain_name" "api" {
   count       = var.custom_domain != "" ? 1 : 0
   domain_name = var.custom_domain
@@ -95,7 +119,7 @@ resource "aws_apigatewayv2_domain_name" "api" {
   depends_on = [aws_acm_certificate.api]
 }
 
-# ─── API Mapping — custom domain → $default stage ─────────────
+# ─── API Mapping — custom domain → $default stage ─────────────────
 resource "aws_apigatewayv2_api_mapping" "api" {
   count       = var.custom_domain != "" ? 1 : 0
   api_id      = aws_apigatewayv2_api.school.id

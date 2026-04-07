@@ -26,3 +26,18 @@ output "api_gateway_domain_target" {
   description = "CNAME target to point school-api.devopscab.com to API Gateway"
   value       = var.custom_domain != "" ? aws_apigatewayv2_domain_name.api[0].domain_name_configuration[0].target_domain_name : null
 }
+
+output "cognito_user_pool_id" {
+  description = "Cognito User Pool ID"
+  value       = aws_cognito_user_pool.school.id
+}
+
+output "cognito_user_pool_client_id" {
+  description = "Cognito App Client ID (used in React Amplify config)"
+  value       = aws_cognito_user_pool_client.web.id
+}
+
+output "cognito_hosted_ui_domain" {
+  description = "Cognito Hosted UI domain"
+  value       = "https://${aws_cognito_user_pool_domain.school.domain}.auth.${var.region}.amazoncognito.com"
+}
