@@ -37,6 +37,12 @@ variable "lambda_jar_key" {
   default     = "school-api-lambda.jar"
 }
 
+variable "custom_domain" {
+  description = "Custom domain for API Gateway (e.g. school-api.devopscab.com). Leave empty to skip."
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "Common tags"
   type        = map(string)

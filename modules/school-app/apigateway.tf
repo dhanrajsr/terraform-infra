@@ -65,3 +65,40 @@ resource "aws_cloudwatch_log_group" "lambda" {
 
   tags = var.tags
 }
+
+# ─── ACM Certificate for custom domain ───────────────────────
+resource "aws_acm_certificate" "api" {
+  count             = var.custom_domain != "" ? 1 : 0
+  domain_name       = var.custom_domain
+  validation_method = "DNS"
+
+  tags = merge(var.tags, { Name = var.custom_domain })
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# ─── API Gateway Custom Domain ────────────────────────────────
+resource "aws_apigatewayv2_domain_name" "api" {
+  count       = var.custom_domain != "" ? 1 : 0
+  domain_name = var.custom_domain
+
+  domain_name_configuration {
+    certificate_arn = aws_acm_certificate.api[0].arn
+    endpoint_type   = "REGIONAL"
+    security_policy = "TLS_1_2"
+  }
+
+  tags = merge(var.tags, { Name = var.custom_domain })
+
+  depends_on = [aws_acm_certificate.api]
+}
+
+# ─── API Mapping — custom domain → $default stage ─────────────
+resource "aws_apigatewayv2_api_mapping" "api" {
+  count       = var.custom_domain != "" ? 1 : 0
+  api_id      = aws_apigatewayv2_api.school.id
+  domain_name = aws_apigatewayv2_domain_name.api[0].id
+  stage       = aws_apigatewayv2_stage.default.id
+}
