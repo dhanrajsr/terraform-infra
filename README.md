@@ -24,6 +24,13 @@
 13. [Custom Domain Setup](#custom-domain-setup)
 14. [CI/CD Pipeline Reference](#cicd-pipeline-reference)
 15. [Troubleshooting](#troubleshooting)
+16. [Phase 2 — EKS + ArgoCD Blue-Green Deployment](#phase-2--eks--argocd-blue-green-deployment)
+    - [EKS Cluster Provisioning](#eks-cluster-provisioning)
+    - [Access the EKS Cluster Locally](#access-the-eks-cluster-locally)
+    - [Install ArgoCD on EKS](#install-argocd-on-eks)
+    - [Blue-Green Production Workflow](#blue-green-deployment--production-workflow)
+    - [Authentication — Cognito + API Gateway](#authentication--cognito--api-gateway-school-app)
+    - [API Gateway Features Enabled](#api-gateway-features-enabled)
 
 ---
 
@@ -906,3 +913,320 @@ aws rds describe-db-instances \
 # Check GitHub Actions runners
 gh api repos/dhanrajsr/school-api-lambda/actions/runners --jq '.runners[] | {name, status, busy}'
 ```
+
+---
+
+## Phase 2 — EKS + ArgoCD Blue-Green Deployment
+
+---
+
+### EKS Cluster Provisioning
+
+The EKS cluster is provisioned via the `aws-eks` Terraform workspace.
+
+**Trigger:**
+```
+terraform-infra → Actions → Terraform
+  service:     aws-eks
+  environment: dev
+  action:      apply
+```
+
+**What gets created:**
+| Resource | Name | Details |
+|---|---|---|
+| EKS Cluster | `eks-dev-us-east-1` | Kubernetes 1.30, us-east-1 |
+| VPC | `eks-dev-us-east-1-vpc` | CIDR 10.0.0.0/16 |
+| Node Group | `main` | t3.medium, min 1 / max 3 |
+| KMS Key | `alias/eks/eks-dev-us-east-1` | Envelope encryption for secrets |
+| CloudWatch Logs | `/aws/eks/eks-dev-us-east-1/cluster` | Control plane logs |
+
+**Known issue — stale state locks:**
+If a pipeline fails mid-apply, a DynamoDB lock is left behind. The workflow automatically force-unlocks it at the start of each run. If you need to clear manually:
+```bash
+aws dynamodb delete-item \
+  --table-name terraform-state-lock \
+  --key '{"LockID": {"S": "aws-terraform-state-497041484428/aws/us-east-1/dev/eks/terraform.tfstate"}}'
+```
+
+**Known issue — resource already exists:**
+If KMS alias or CloudWatch log group already exist in AWS but not in state, import them:
+```bash
+cd terraform-infra/aws/us-east-1/dev/eks
+terraform init
+
+terraform import \
+  'module.eks.module.eks.module.kms.aws_kms_alias.this["cluster"]' \
+  'alias/eks/eks-dev-us-east-1'
+
+terraform import \
+  'module.eks.module.eks.aws_cloudwatch_log_group.this[0]' \
+  '/aws/eks/eks-dev-us-east-1/cluster'
+```
+
+---
+
+### Access the EKS Cluster Locally
+
+The cluster is created by the `github-actions-terraform` IAM role. To grant your local IAM identity access:
+
+```bash
+# 1. Update kubeconfig
+aws eks update-kubeconfig --region us-east-1 --name eks-dev-us-east-1
+
+# 2. If you get "credentials" error, grant your IAM identity cluster admin access:
+aws eks create-access-entry \
+  --cluster-name eks-dev-us-east-1 \
+  --principal-arn arn:aws:iam::497041484428:root \
+  --type STANDARD
+
+aws eks associate-access-policy \
+  --cluster-name eks-dev-us-east-1 \
+  --principal-arn arn:aws:iam::497041484428:root \
+  --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy \
+  --access-scope type=cluster
+
+# 3. Verify
+kubectl get nodes
+```
+
+---
+
+### Install ArgoCD on EKS
+
+```bash
+# ArgoCD
+kubectl create namespace argocd
+curl -sL https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml \
+  -o /tmp/argocd-install.yaml
+kubectl apply -n argocd -f /tmp/argocd-install.yaml
+
+# Argo Rollouts
+kubectl create namespace argo-rollouts
+curl -sL https://github.com/argoproj/argo-rollouts/releases/latest/download/install.yaml \
+  -o /tmp/argo-rollouts-install.yaml
+kubectl apply -n argo-rollouts -f /tmp/argo-rollouts-install.yaml
+
+# Wait for all pods to be ready
+kubectl wait --for=condition=Ready pods --all -n argocd --timeout=300s
+kubectl wait --for=condition=Ready pods --all -n argo-rollouts --timeout=120s
+
+# Expose ArgoCD UI via LoadBalancer
+kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "LoadBalancer"}}'
+
+# Get UI URL (takes ~60s for ELB to provision)
+kubectl get svc argocd-server -n argocd --no-headers | awk '{print $4}'
+
+# Get admin password
+kubectl -n argocd get secret argocd-initial-admin-secret \
+  -o go-template='{{.data.password | base64decode}}' && echo
+```
+
+**ArgoCD UI credentials:**
+- URL: `https://<elb-hostname>` (accept self-signed cert warning)
+- Username: `admin`
+- Password: output of command above
+
+**Install kubectl Argo Rollouts plugin (Mac):**
+```bash
+brew install argoproj/tap/kubectl-argo-rollouts
+```
+
+---
+
+### Deploy ArgoCD Applications
+
+```bash
+# Create namespaces
+kubectl create namespace staging
+kubectl create namespace production
+
+# Apply ArgoCD application manifests
+kubectl apply -f argocd/spring-maven-staging.yaml
+kubectl apply -f argocd/spring-maven-production.yaml
+kubectl apply -f argocd/spring-gradle-staging.yaml
+kubectl apply -f argocd/spring-gradle-production.yaml
+```
+
+---
+
+### Blue-Green Deployment — Production Workflow
+
+Blue-Green deployment runs two full versions simultaneously. Users always hit Blue (live). Green is tested privately before traffic switches.
+
+```
+Before deployment:
+  Users → spring-maven.devopscab.com     → Active Service  → Blue Pods (v1)  ← 100% traffic
+          spring-maven-preview.devopscab.com → Preview Service → (empty)
+
+After pushing v2:
+  Users → spring-maven.devopscab.com     → Active Service  → Blue Pods (v1)  ← 100% traffic (unchanged)
+  QA   → spring-maven-preview.devopscab.com → Preview Service → Green Pods (v2) ← testing only
+
+After Promote:
+  Users → spring-maven.devopscab.com     → Active Service  → Green Pods (v2) ← traffic switched
+          Blue pods stay alive 30s for rollback, then scale to 0
+```
+
+**The two URLs:**
+
+| URL | Purpose | Who accesses |
+|---|---|---|
+| `spring-maven.devopscab.com` | Production (active/Blue) | All users |
+| `spring-maven-preview.devopscab.com` | Preview (Green) | QA / you only |
+
+Users **never** see the preview URL. The switch happens at the Kubernetes Service selector level — instantaneous, zero downtime.
+
+---
+
+#### Step-by-Step Production Deployment
+
+**Step 1 — CI builds and pushes new image**
+```
+spring-boot-maven-app CI → builds v2 → pushes to DockerHub
+                         → updates spring-gitops/apps/spring-maven/helm/values.yaml image tag
+                         → commits to spring-gitops repo
+```
+
+**Step 2 — ArgoCD detects drift**
+- ArgoCD polls spring-gitops every 3 minutes
+- Sees new image tag in values.yaml vs running pods
+- Marks `spring-maven-production` as **OutOfSync**
+
+**Step 3 — Sync in ArgoCD UI**
+- Click `spring-maven-production` → **Sync** → **Synchronize**
+- Argo Rollouts controller starts Green pods (v2)
+- Blue pods continue serving 100% of production traffic
+
+**Step 4 — Test Green on preview URL**
+```bash
+curl https://spring-maven-preview.devopscab.com/api/health
+# or open in browser — only you can access this URL
+```
+
+**Step 5 — Promote Green to production**
+```bash
+# Option A: CLI
+kubectl argo rollouts promote spring-maven -n production
+
+# Option B: ArgoCD UI
+# Click the Rollout resource → click "Promote"
+```
+Traffic switches instantly. Green becomes the new Blue.
+
+**Step 6 — Rollback if needed**
+```bash
+# Within 30s of promotion (Blue pods still alive):
+kubectl argo rollouts undo spring-maven -n production
+
+# Before promoting (abort Green, keep Blue):
+kubectl argo rollouts abort spring-maven -n production
+```
+
+**Step 7 — Watch rollout live**
+```bash
+kubectl argo rollouts get rollout spring-maven -n production --watch
+```
+
+---
+
+#### Rollout Config Reference
+
+Configured in `spring-gitops/apps/spring-maven/helm/values.yaml`:
+
+```yaml
+blueGreen:
+  autoPromotionEnabled: false   # never auto-promote — always require human approval
+  scaleDownDelaySeconds: 30     # keep Blue alive 30s after promotion (rollback window)
+  previewReplicaCount: 1        # Green runs 1 pod during preview (saves cost)
+  abortScaleDownDelaySeconds: 30 # cleanup failed Green pods after 30s
+```
+
+| Config | Effect |
+|---|---|
+| `autoPromotionEnabled: false` | Traffic never switches without a human clicking Promote |
+| `scaleDownDelaySeconds: 30` | 30-second window to rollback after promotion before Blue is gone |
+| `previewReplicaCount: 1` | Green runs minimal pods during preview — scales up on promotion |
+
+---
+
+#### Rollback Scenarios
+
+| Scenario | Blue traffic affected? | How to fix |
+|---|---|---|
+| Green pods fail health probes | No — Argo auto-aborts | Push a fix via CI |
+| Green healthy, you reject it in testing | No | `kubectl argo rollouts abort spring-maven -n production` |
+| Issue found within 30s of promotion | Yes — switch back instantly | `kubectl argo rollouts undo spring-maven -n production` |
+| Issue found after 30s (Blue gone) | Yes — need new rollout | Push old image tag to Git → new rollout cycle |
+
+---
+
+### Authentication — Cognito + API Gateway (School App)
+
+The school app uses AWS Cognito for authentication. JWT tokens are validated at the API Gateway level — no auth logic in Lambda.
+
+```
+React UI → Cognito (login) → JWT token
+         → API request + Authorization: Bearer <token>
+         → API Gateway JWT Authorizer validates token (no Lambda invocation for invalid tokens)
+         → Lambda receives verified request
+```
+
+**Components:**
+
+| Component | Resource | Purpose |
+|---|---|---|
+| Cognito User Pool | `school-user-pool-dev` | Manages users, passwords, email verification |
+| Cognito App Client | `school-web-client-dev` | Public SPA client (no secret) |
+| JWT Authorizer | API Gateway | Validates Bearer token on every request |
+| Amplify (React) | `aws-amplify` library | Login UI, token management, refresh |
+
+**Terraform outputs (after `aws-school` apply):**
+```bash
+terraform output cognito_user_pool_id      # e.g. us-east-1_XXXXXXX
+terraform output cognito_user_pool_client_id  # e.g. 4abc123...
+```
+
+**GitHub Secrets required for school-ui CI:**
+```bash
+gh secret set VITE_COGNITO_USER_POOL_ID --body "<pool_id>"   --repo dhanrajsr/school-ui
+gh secret set VITE_COGNITO_CLIENT_ID    --body "<client_id>" --repo dhanrajsr/school-ui
+```
+
+**Deployment order with auth:**
+1. `aws-school` → `dev` → `apply` (creates Cognito + API Gateway JWT Authorizer)
+2. Set GitHub secrets above
+3. Trigger `school-api-lambda` CI (Spring Security config picks up)
+4. Trigger `school-ui` CI (Amplify login screen deployed)
+
+**How the login flow works:**
+1. User visits `school.devopscab.com` → sees Cognito login screen (rendered by Amplify)
+2. User signs in with email + password
+3. Amplify gets JWT tokens from Cognito
+4. Every API call includes `Authorization: Bearer <id_token>`
+5. API Gateway validates the JWT — if invalid, returns 401 without invoking Lambda
+6. Lambda receives only authenticated requests
+
+**Creating the first user:**
+```bash
+aws cognito-idp admin-create-user \
+  --user-pool-id <pool_id> \
+  --username admin@school.com \
+  --temporary-password "Temp@1234" \
+  --user-attributes Name=email,Value=admin@school.com Name=email_verified,Value=true
+
+# User logs in with temporary password → Cognito forces password change on first login
+```
+
+---
+
+### API Gateway Features Enabled
+
+| Feature | Config | Purpose |
+|---|---|---|
+| JWT Authorizer | Cognito User Pool | Blocks unauthenticated requests at gateway — Lambda not invoked |
+| Throttling | 100 burst / 50 rps | Prevents abuse and runaway costs |
+| Access Logs | CloudWatch `/aws/apigateway/school-api-dev` | Audit trail with user email per request |
+| CORS | All origins, Authorization header allowed | Enables browser-based API calls |
+| Custom Domain | `school-api.devopscab.com` | Clean API URL instead of execute-api URL |
+
