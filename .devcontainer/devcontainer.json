@@ -1,0 +1,50 @@
+{
+  "name": "DevOps Workspace",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+
+  "features": {
+    // AWS CLI
+    "ghcr.io/devcontainers/features/aws-cli:1": {},
+    // Terraform
+    "ghcr.io/devcontainers/features/terraform:1": {
+      "version": "1.10"
+    },
+    // Node.js (needed for Claude Code CLI)
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    },
+    // GitHub CLI
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    // kubectl + helm
+    "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
+      "kubectl": "latest",
+      "helm": "latest",
+      "minikube": "none"
+    },
+    // Docker (for running containers inside codespace)
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+
+  // VS Code extensions auto-installed on every codespace
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code",
+        "hashicorp.terraform",
+        "ms-kubernetes-tools.vscode-kubernetes-tools",
+        "ms-azuretools.vscode-docker",
+        "redhat.vscode-yaml",
+        "github.vscode-github-actions",
+        "eamodio.gitlens"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "editor.formatOnSave": true,
+        "editor.fontSize": 14
+      }
+    }
+  },
+
+  // Run after container is created — install Claude Code CLI
+  "postCreateCommand": "npm install -g @anthropic-ai/claude-code && echo 'Claude Code CLI installed'"
+}
